@@ -1,0 +1,17 @@
+{
+  "unit_tests_passed": 37,
+  "bayesian_trials_completed": 12,
+  "selected_model": "random_forest",
+  "selected_variant": "untuned",
+  "selected_model_sha256": "b5533a8709b43a90e06376991b659edf848d188079cebcccee502ba203476eb4",
+  "inference_trip": "00000000\\00000000",
+  "inference_observations": 2503,
+  "inference_candidates": 23160,
+  "route_free_features_match_evaluation": true,
+  "serialized_predictions_match": true,
+  "label_metadata_ignored": true,
+  "empty_candidates_supported": true,
+  "trained_trip_count": 80,
+  "feature_count": 17,
+  "source_fingerprint_matches": true
+}

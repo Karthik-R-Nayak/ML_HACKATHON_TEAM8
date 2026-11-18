@@ -1,0 +1,12 @@
+[
+  {
+    "algorithm": "brute",
+    "fit_seconds": 6.586860300012631,
+    "predict_seconds": 1.6573114000202622
+  },
+  {
+    "algorithm": "ball_tree",
+    "fit_seconds": 23.25006160000339,
+    "predict_seconds": 12.655754500010516
+  }
+]

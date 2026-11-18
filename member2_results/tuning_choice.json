@@ -1,0 +1,5 @@
+{
+  "model": "hist_gradient_boosting",
+  "strongest_baseline": "random_forest",
+  "rule": "Explicit promising family when supplied; otherwise highest CV Top-1 family"
+}

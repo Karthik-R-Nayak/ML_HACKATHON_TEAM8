@@ -1,0 +1,12 @@
+{
+  "model": "logistic_regression",
+  "params": {},
+  "top1_trip_mean": 0.8258539721823761,
+  "top1_pooled": 0.7652086853138101,
+  "top1_fold_std": 0.014489518768233123,
+  "macro_f1": 0.8768101771370652,
+  "log_loss": 0.08102492334814192,
+  "fit_seconds": 24.691331600013655,
+  "predict_seconds": 1.0335749000369105,
+  "macro_f1_fold_std": 0.026486673038376134
+}

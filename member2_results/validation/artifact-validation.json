@@ -1,0 +1,134 @@
+{
+  "status": "PASS",
+  "checked_utc": "2026-11-18T08:19:16.907883+00:00",
+  "total_checks": 13,
+  "checks": [
+    {
+      "check": "training source fingerprints",
+      "status": "PASS"
+    },
+    {
+      "check": "train table/label consistency",
+      "status": "PASS",
+      "trips": 80,
+      "observations": 208417,
+      "candidates": 3247671
+    },
+    {
+      "check": "student_test table/label consistency",
+      "status": "PASS",
+      "trips": 10,
+      "observations": 19160,
+      "candidates": 366633
+    },
+    {
+      "check": "trip separation and CV coverage",
+      "status": "PASS",
+      "development": 64,
+      "holdout": 16,
+      "folds": 3
+    },
+    {
+      "check": "Bayesian database, sampler checkpoint and recorded fold scores",
+      "status": "PASS",
+      "completed_trials": 12
+    },
+    {
+      "check": "route-free feature regeneration for all student trips",
+      "status": "PASS",
+      "trips": 10
+    },
+    {
+      "check": "logistic_regression_untuned saved-model inference and reproduced metrics",
+      "status": "PASS",
+      "candidates": 366633,
+      "top1": 0.8622162332598146
+    },
+    {
+      "check": "knn_untuned saved-model inference and reproduced metrics",
+      "status": "PASS",
+      "candidates": 366633,
+      "top1": 0.8193305554784074
+    },
+    {
+      "check": "decision_tree_untuned saved-model inference and reproduced metrics",
+      "status": "PASS",
+      "candidates": 366633,
+      "top1": 0.8684935232591282
+    },
+    {
+      "check": "random_forest_untuned saved-model inference and reproduced metrics",
+      "status": "PASS",
+      "candidates": 366633,
+      "top1": 0.8780601955957931
+    },
+    {
+      "check": "hist_gradient_boosting_untuned saved-model inference and reproduced metrics",
+      "status": "PASS",
+      "candidates": 366633,
+      "top1": 0.879419898364539
+    },
+    {
+      "check": "hist_gradient_boosting_tuned saved-model inference and reproduced metrics",
+      "status": "PASS",
+      "candidates": 366633,
+      "top1": 0.8768986559226194
+    },
+    {
+      "check": "selected-model identity, checksum and metadata",
+      "status": "PASS"
+    }
+  ],
+  "measurements": [
+    {
+      "model": "logistic_regression",
+      "variant": "untuned",
+      "candidates": 366633,
+      "inference_seconds": 0.2148915999860037,
+      "top1_trip_mean": 0.8622162332598146,
+      "macro_f1": 0.8982345485320951
+    },
+    {
+      "model": "knn",
+      "variant": "untuned",
+      "candidates": 366633,
+      "inference_seconds": 49.79584559999057,
+      "top1_trip_mean": 0.8193305554784074,
+      "macro_f1": 0.8758195760220471
+    },
+    {
+      "model": "decision_tree",
+      "variant": "untuned",
+      "candidates": 366633,
+      "inference_seconds": 0.13449260001652874,
+      "top1_trip_mean": 0.8684935232591282,
+      "macro_f1": 0.9179968024671241
+    },
+    {
+      "model": "random_forest",
+      "variant": "untuned",
+      "candidates": 366633,
+      "inference_seconds": 1.1730857999937143,
+      "top1_trip_mean": 0.8780601955957931,
+      "macro_f1": 0.9213442942023384
+    },
+    {
+      "model": "hist_gradient_boosting",
+      "variant": "untuned",
+      "candidates": 366633,
+      "inference_seconds": 0.882161499990616,
+      "top1_trip_mean": 0.879419898364539,
+      "macro_f1": 0.9225636317935209
+    },
+    {
+      "model": "hist_gradient_boosting",
+      "variant": "tuned",
+      "candidates": 366633,
+      "inference_seconds": 0.651377300004242,
+      "top1_trip_mean": 0.8768986559226194,
+      "macro_f1": 0.9207439834130291
+    }
+  ],
+  "elapsed_seconds": 62.83260889997473,
+  "scope": "Member 1 pipeline and Member 2 models; HMM, API and UI are outside this validation"
+}

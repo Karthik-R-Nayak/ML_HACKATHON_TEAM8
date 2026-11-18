@@ -1,0 +1,12 @@
+{
+  "model": "decision_tree",
+  "params": {},
+  "top1_trip_mean": 0.8210446324003684,
+  "top1_pooled": 0.7643764470308492,
+  "top1_fold_std": 0.004407295389394651,
+  "macro_f1": 0.8990739878046204,
+  "log_loss": 0.10112197297037576,
+  "fit_seconds": 106.54142190000857,
+  "predict_seconds": 0.5707273000152782,
+  "macro_f1_fold_std": 0.018366848935519136
+}

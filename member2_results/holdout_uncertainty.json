@@ -1,0 +1,10 @@
+{
+  "trips": 16,
+  "tuned_minus_untuned_trip_top1": -0.0011820392235218496,
+  "paired_trip_bootstrap_95_percent": [
+    -0.004006895977589875,
+    0.002032104874855911
+  ],
+  "resamples": 5000,
+  "note": "Exploratory trip-level uncertainty; does not replace external evaluation"
+}

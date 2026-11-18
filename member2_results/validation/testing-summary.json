@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "checked_utc": "2026-11-18T08:15:46.966603+00:00",
+  "pytest": {
+    "tests": 37,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "artifact_checks": 13,
+  "cli_checks": 9,
+  "model_configurations": 6,
+  "student_trips": 10,
+  "student_candidate_rows": 366633,
+  "non_blocking_warnings": [
+    "Windows physical-core detection falls back to logical cores",
+    "Existing Member 1 pandas fillna downcasting FutureWarning"
+  ],
+  "scope": "Member 1 data pipeline and Member 2 ML work; HMM/API/frontend/deployment not tested",
+  "models_retrained": false,
+  "optimisation_trials_added": 0
+}

@@ -1,0 +1,12 @@
+{
+  "model": "hist_gradient_boosting",
+  "params": {},
+  "top1_trip_mean": 0.8316419097944989,
+  "top1_pooled": 0.7715474626118516,
+  "top1_fold_std": 0.005139924180158778,
+  "macro_f1": 0.9053126860835216,
+  "log_loss": 0.05400440368936996,
+  "fit_seconds": 94.84783590002917,
+  "predict_seconds": 12.76440799998818,
+  "macro_f1_fold_std": 0.022717326701286542
+}

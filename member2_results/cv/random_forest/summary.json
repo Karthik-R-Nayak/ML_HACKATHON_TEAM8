@@ -1,0 +1,12 @@
+{
+  "model": "random_forest",
+  "params": {},
+  "top1_trip_mean": 0.834008779132574,
+  "top1_pooled": 0.7735623552969151,
+  "top1_fold_std": 0.008362284493547919,
+  "macro_f1": 0.9061428055074877,
+  "log_loss": 0.05486019810388021,
+  "fit_seconds": 900.6839006000082,
+  "predict_seconds": 11.346566799998982,
+  "macro_f1_fold_std": 0.022558949140945087
+}

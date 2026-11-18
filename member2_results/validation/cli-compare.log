@@ -1,0 +1,15 @@
+logistic_regression logistic_regression fold 1/3: trip Top-1=0.8140, F1=0.8473, fit=9.4s predict=0.4s
+logistic_regression logistic_regression fold 2/3: trip Top-1=0.8421, F1=0.8985, fit=8.7s predict=0.4s
+logistic_regression logistic_regression fold 3/3: trip Top-1=0.8219, F1=0.8846, fit=6.6s predict=0.3s
+knn knn fold 1/3: trip Top-1=0.7472, F1=0.8284, fit=0.1s predict=83.4s
+knn knn fold 2/3: trip Top-1=0.7801, F1=0.8640, fit=0.1s predict=85.4s
+knn knn fold 3/3: trip Top-1=0.7659, F1=0.8626, fit=0.1s predict=85.7s
+decision_tree decision_tree fold 1/3: trip Top-1=0.8192, F1=0.8800, fit=40.7s predict=0.2s
+decision_tree decision_tree fold 2/3: trip Top-1=0.8261, F1=0.9166, fit=35.1s predict=0.1s
+decision_tree decision_tree fold 3/3: trip Top-1=0.8179, F1=0.9007, fit=30.7s predict=0.2s
+random_forest random_forest fold 1/3: trip Top-1=0.8278, F1=0.8816, fit=335.8s predict=4.4s
+random_forest random_forest fold 2/3: trip Top-1=0.8436, F1=0.9259, fit=292.5s predict=4.0s
+random_forest random_forest fold 3/3: trip Top-1=0.8309, F1=0.9109, fit=272.4s predict=3.0s
+hist_gradient_boosting hist_gradient_boosting fold 1/3: trip Top-1=0.8269, F1=0.8799, fit=33.6s predict=4.6s
+hist_gradient_boosting hist_gradient_boosting fold 2/3: trip Top-1=0.8371, F1=0.9235, fit=34.3s predict=4.7s
+hist_gradient_boosting hist_gradient_boosting fold 3/3: trip Top-1=0.8311, F1=0.9125, fit=26.9s predict=3.5s

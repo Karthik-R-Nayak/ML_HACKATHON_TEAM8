@@ -1,0 +1,41 @@
+{
+  "status": "PASS",
+  "checks": [
+    {
+      "check": "train_models.py --help",
+      "status": "PASS"
+    },
+    {
+      "check": "prepare_ml_data.py --help",
+      "status": "PASS"
+    },
+    {
+      "check": "report_ml_results.py --help",
+      "status": "PASS"
+    },
+    {
+      "check": "validate_ml_artifacts.py --help",
+      "status": "PASS"
+    },
+    {
+      "check": "cached --phase compare",
+      "status": "PASS"
+    },
+    {
+      "check": "cached --phase tune",
+      "status": "PASS"
+    },
+    {
+      "check": "resume preserves model selection and adds no trials/refits",
+      "status": "PASS"
+    },
+    {
+      "check": "rejects insufficient Bayesian trial budget",
+      "status": "PASS"
+    },
+    {
+      "check": "rejects evaluator partition",
+      "status": "PASS"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "model": "hist_gradient_boosting",
+  "params": {
+    "learning_rate": 0.030109960694854884,
+    "max_iter": 240,
+    "max_leaf_nodes": 55,
+    "min_samples_leaf": 23,
+    "l2_regularization": 0.026339782369354317
+  },
+  "top1_trip_mean": 0.8329768579101142,
+  "top1_pooled": 0.7726362555534697,
+  "top1_fold_std": 0.004909310705702624,
+  "macro_f1": 0.9053847868822776,
+  "log_loss": 0.0538760834144762,
+  "fit_seconds": 99.14949820001493,
+  "predict_seconds": 21.87421650000033,
+  "macro_f1_fold_std": 0.021978292161227847
+}

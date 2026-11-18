@@ -1,0 +1,109 @@
+{
+  "seed": 42,
+  "folds": 3,
+  "trials": 12,
+  "jobs": 4,
+  "baselines": {
+    "logistic_regression": {
+      "C": 1.0,
+      "max_iter": 2000,
+      "solver": "lbfgs"
+    },
+    "knn": {
+      "n_neighbors": 15,
+      "weights": "distance",
+      "algorithm": "brute",
+      "leaf_size": 40
+    },
+    "decision_tree": {
+      "max_depth": 12,
+      "min_samples_leaf": 20
+    },
+    "random_forest": {
+      "n_estimators": 120,
+      "max_depth": 18,
+      "min_samples_leaf": 10,
+      "max_features": "sqrt"
+    },
+    "hist_gradient_boosting": {
+      "max_iter": 120,
+      "learning_rate": 0.1,
+      "max_leaf_nodes": 31,
+      "min_samples_leaf": 30,
+      "l2_regularization": 1.0,
+      "early_stopping": false
+    }
+  },
+  "knn_training_observation_cap_per_trip": 100,
+  "data_fingerprint": {
+    "archive_sha256": "4804b0399d1d56f4844b9c74e2f998aae0a281fb5947a1f47ad1bd013214d248",
+    "partition": "train",
+    "pipeline_config": {
+      "io": {
+        "node_id_base": 0,
+        "arc_id_base": 0,
+        "time_unit": "auto"
+      },
+      "cand": {
+        "radius_m": 100.0,
+        "max_candidates": 30,
+        "cell_m": 100.0
+      },
+      "feat": {
+        "heading_mode": "central",
+        "min_move_m": 3.0
+      },
+      "align": {
+        "search_radius_m": 150.0,
+        "sigma_m": 20.0,
+        "back_tol_m": 30.0,
+        "tol_abs_m": 30.0,
+        "tol_rel": 0.3,
+        "lam_per_m": 0.02,
+        "skip_cap_m": 500.0
+      }
+    },
+    "features": [
+      "dist_m",
+      "proj_frac",
+      "heading_diff_deg",
+      "gps_speed_mps",
+      "gps_bearing_deg",
+      "arc_bearing_deg",
+      "arc_length_m",
+      "from_in_deg",
+      "from_out_deg",
+      "to_in_deg",
+      "to_out_deg",
+      "dt_prev_s",
+      "dt_next_s",
+      "gps_heading_valid",
+      "dist_rank",
+      "dist_minus_min_m",
+      "n_candidates"
+    ],
+    "pipeline_source_sha256": {
+      "__init__.py": "88a9e6901c6292bfb62d8235f27b854f1bc86ad66a8904b65abc34b3c32749e8",
+      "align.py": "cb549141ba7547071e78e066808f8397419112c199fa08c3597cb5f274b14267",
+      "audit.py": "4fc66930ea69cd5e71396e143919ec27a28782151fd9ff9ecaa8b2dc02528505",
+      "candidates.py": "39a04205b5a9c3f399d48a779de6b9d469405db671a3326dacf084bee47d0f98",
+      "config.py": "67bb4fc1b6066df9a0d10f5055c3439dae4d3b20c19b0dd710a2f8b1debc2b00",
+      "dataset.py": "c0cbf33ce2aa27428f30a5207aa9de82bcd11dd32bf95ecd8f198fe9d034b1b8",
+      "features.py": "5f95fb09d17393863c02e1a3c28d3417f5895469238a643cd87f087795697673",
+      "geo.py": "18f6934ae8fbe9f3ba87191bcd1c77f37aadfa3625851400d5c2ef0165634c92",
+      "index.py": "e3a5716a3b1149d9e21d3389edd29f16c1076310775e5930d5d7d0f780422462",
+      "io.py": "0c9feea65b2006cd53bc9546b0b1295911e49a18d869bca77df5f1de418f189c",
+      "labels.py": "2c1b9c9ca469cb102516c283500195d5f5efe92dff5273f78642d8cc2b9461da",
+      "network.py": "789204c2d7df525e2d95b9fde486945c58dd47fbe3d5c1501abd21ed22497c47",
+      "validate.py": "b8aa51c567cc52d51750d7cfb2f2ff8ca21b9b899879f96504783233c741bde0"
+    }
+  },
+  "code_sha256": {
+    "__init__.py": "06916fd959658c5190ee1b6fa758cddd4b6505a3b293f7a06e090ee6aabc39f4",
+    "data.py": "400980865633ca95ecef1f953a292f37d4b7e9328e5e4858eb527fa703e7be23",
+    "evaluation.py": "cda96659fea5cee2b4913a91b33e1561febee26c59fe9cab2ab2e3ee041a9e4f",
+    "experiment.py": "fb0d554efaba5a97d507430f38bf4e3d884f946e826cea0c1592c45a2d9e10bd",
+    "models.py": "c30ad0fce41218088fbfc3a3bfe17dceeb2535f8ed258059359b5aef65fcb9ae",
+    "predict.py": "59f6b79f6ddaa61ac300277dc96458f4cab9dfef273b7d74e0a075396462643f"
+  }
+}

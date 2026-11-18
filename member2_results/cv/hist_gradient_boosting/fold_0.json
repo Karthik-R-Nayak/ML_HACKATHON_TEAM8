@@ -1,0 +1,32 @@
+{
+  "top1_trip_mean": 0.8269264008238891,
+  "top1_pooled": 0.6824398249452954,
+  "top1_given_candidate": 0.7979043605854246,
+  "candidate_miss_rate": 0.14470974385377783,
+  "aligned_observations": 62152,
+  "unlabeled_observations": 9078,
+  "zero_candidate_aligned": 1046,
+  "accuracy": 0.9709421238544574,
+  "precision": 0.7875177084748394,
+  "recall": 0.7633846269611347,
+  "macro_f1": 0.8798651342467043,
+  "log_loss": 0.0732901284460285,
+  "brier_score": 0.021200020087661378,
+  "candidate_rows_valid": 809660,
+  "positive_fraction": 0.06565471926487662,
+  "confusion_matrix": [
+    [
+      745553,
+      10949
+    ],
+    [
+      12578,
+      40580
+    ]
+  ],
+  "fit_seconds": 33.633644300018204,
+  "predict_seconds": 4.641591399995377,
+  "predict_ms_per_1000_candidates": 5.320643898139304,
+  "training_candidate_rows": 1754733,
+  "evaluated_candidate_rows": 872374
+}
