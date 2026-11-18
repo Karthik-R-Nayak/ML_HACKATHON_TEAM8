@@ -1,0 +1,21 @@
+# Dataset
+data/
+Student folder/
+*.track
+*.nodes
+*.arcs
+*.route
+
+# Generated reports
+reports/
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Models
+*.pkl
+*.joblib
