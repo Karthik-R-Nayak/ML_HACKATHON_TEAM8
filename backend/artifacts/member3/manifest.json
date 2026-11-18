@@ -1,0 +1,16 @@
+{
+  "decoder": "viterbi",
+  "variant": "directed_network",
+  "version": "member3-viterbi-v1",
+  "parameters": {
+    "beta_m": 10.0,
+    "disconnect_penalty": 50.0,
+    "max_gap_s": 15.0,
+    "max_speed_mps": 40.0,
+    "min_emission_prob": 1e-06
+  },
+  "score_column": "emission_probability",
+  "transition_model": "exponential_distance_difference",
+  "emission_model": "ml_candidate_posterior",
+  "description": "Hidden Markov Model with Viterbi decoding over directed road network topology, driven by Member 2 Random Forest emission posteriors."
+}
