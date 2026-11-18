@@ -18,3 +18,6 @@ venv/
 # Model artifacts
 *.pkl
 *.joblib
+
+# Generated ML datasets
+pathsnap/outputs/
