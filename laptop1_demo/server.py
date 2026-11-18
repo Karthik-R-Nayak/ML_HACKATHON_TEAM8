@@ -1,4 +1,4 @@
-"""Laptop 1 FastAPI host using supplied GPS contracts and original ML inference."""
+"""Laptop 1 FastAPI host using supplied GPS contracts, Member 2 ML scoring, and Member 3 HMM/Viterbi route decoder."""
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 import hashlib
@@ -8,30 +8,36 @@ from pathlib import Path
 import sys
 import time
 
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "pathsnap"))
 sys.path.insert(0, str(ROOT / "backend"))
+
 from app.contracts import PathSnapPreprocessRequest
 from app.pathsnap.pipeline import PATHSNAP_PIPELINE
-from app.pathsnap.interfaces import PathSnapModelRequest
+from app.pathsnap.interfaces import (
+    PathSnapModelRequest,
+    PathSnapDecodeRequest,
+    EMISSION_COLUMN,
+)
 from app.pathsnap.member2_scorer import Member2Scorer
+from app.pathsnap.member3_decoder import Member3ViterbiDecoder, load_member3_decoder
+from app.pathsnap.preprocessing.align import align_route
+from app.pathsnap.preprocessing.config import AlignConfig
 from pathsnap.config import PipelineConfig, IOConfig
-from pathsnap.candidates import build_index
-from pathsnap.dataset import discover_trips, process_trip
+from pathsnap.dataset import discover_trips
 from pathsnap.features import FEATURE_COLUMNS
 from pathsnap.io import load_trip_files, parse_arcs, parse_nodes
-from pathsnap.network import build_network
-from pathsnap.ml.predict import score_candidates
 
 DEFAULT_WORK = ROOT.parent / "experiments/member2"
 PACKAGED_MODEL = ROOT / "backend/artifacts/member2/selected_model.joblib"
+MEMBER3_ARTIFACTS = ROOT / "backend/artifacts/member3"
 
 
 def load_selected(path):
@@ -58,33 +64,600 @@ def load_selected(path):
 
 def run_scoring(bundle, trip_id, track, nodes, arcs):
     started = time.perf_counter()
-    # No route parameter is accepted from the caller or disk at this boundary.
     prepared = PATHSNAP_PIPELINE.prepare(trip_id=trip_id, track=track, nodes=nodes, arcs=arcs, route_arc_ids=None)
     scorer = Member2Scorer(bundle)
-    scored = scorer.score_candidates(PathSnapModelRequest(prepared.trip_id,
-        prepared.candidate_features, prepared.candidate_feature_columns)).candidate_scores
+    scored = scorer.score_candidates(PathSnapModelRequest(
+        prepared.trip_id,
+        prepared.candidate_features,
+        prepared.candidate_feature_columns
+    )).candidate_scores
+
     probability = scored.emission_probability.to_numpy(dtype=np.float64)
     if not np.isfinite(probability).all() or ((probability < 0) | (probability > 1)).any():
         raise ValueError("Invalid model probability output")
-    # Copy the complete candidate table: arc_idx and every identity field survive.
-    scored["emission_probability"] = probability
+
     if len(scored):
-        chosen = scored.sort_values(["obs_idx", "emission_probability", "dist_rank", "arc_id"],
-            ascending=[True, False, True, True], kind="stable").drop_duplicates("obs_idx")
+        chosen = scored.sort_values(
+            ["obs_idx", "emission_probability", "dist_rank", "arc_id"],
+            ascending=[True, False, True, True],
+            kind="stable"
+        ).drop_duplicates("obs_idx")
     else:
         chosen = scored
-    predictions = pd.DataFrame({"trip_id": trip_id, "obs_idx": np.arange(len(track)), "t": track.t.to_numpy()})
-    predictions = predictions.merge(chosen[["obs_idx", "arc_id", "arc_idx", "emission_probability"]], on="obs_idx", how="left", validate="one_to_one")
+
+    predictions = pd.DataFrame({
+        "trip_id": trip_id,
+        "obs_idx": np.arange(len(track)),
+        "t": track.t.to_numpy()
+    })
+    predictions = predictions.merge(
+        chosen[["obs_idx", "arc_id", "arc_idx", "emission_probability"]],
+        on="obs_idx",
+        how="left",
+        validate="one_to_one"
+    )
     predictions["status"] = np.where(predictions.arc_id.isna(), "no_candidates", "scored")
-    # pandas JSON converts feature NaNs to null, permitting strict JSON responses.
-    return dict(trip_id=trip_id, model="random_forest", variant="untuned", is_fixture=False,
-        hmm_connected=False, labeling_performed=False, feature_columns=FEATURE_COLUMNS,
-        observation_count=len(track), candidate_count=len(scored),
+
+    return dict(
+        trip_id=trip_id,
+        model="random_forest",
+        variant="untuned",
+        is_fixture=False,
+        hmm_connected=True,
+        labeling_performed=False,
+        feature_columns=FEATURE_COLUMNS,
+        observation_count=len(track),
+        candidate_count=len(scored),
         probability_dtype=str(scored.emission_probability.dtype),
-        elapsed_seconds=time.perf_counter()-started,
+        elapsed_seconds=time.perf_counter() - started,
         candidates=json.loads(scored.to_json(orient="records", double_precision=15)),
         predictions=json.loads(predictions.to_json(orient="records", double_precision=15)),
-        notice="Real classifier scores only. Candidate-match posteriors are not calibrated HMM emission likelihoods. No route reconstruction is connected.")
+        notice="Real classifier scores. Use /v1/pathsnap/trips/{trip_id}/match for full HMM Viterbi route reconstruction."
+    )
+
+
+def run_matching(bundle, decoder, trip_id, track, nodes, arcs, route_arc_ids=None):
+    started = time.perf_counter()
+
+    # Inference never sees the ground truth route
+    prepared = PATHSNAP_PIPELINE.prepare(
+        trip_id=trip_id,
+        track=track,
+        nodes=nodes,
+        arcs=arcs,
+        route_arc_ids=None
+    )
+    scorer = Member2Scorer(bundle)
+    scored = scorer.score_candidates(PathSnapModelRequest(
+        prepared.trip_id,
+        prepared.candidate_features,
+        prepared.candidate_feature_columns
+    ))
+
+    # Run Member 3 HMM/Viterbi route decoder
+    decode_req = PathSnapDecodeRequest(
+        trip_id=prepared.trip_id,
+        candidate_scores=scored.candidate_scores,
+        observations=prepared.observations,
+        network=prepared.network,
+    )
+    decode_res = decoder.decode_path(decode_req)
+    decoded_path = decode_res.decoded_path
+
+    # Merge emission probability and GPS coordinates into decoded path
+    cand_scores = scored.candidate_scores
+    if len(cand_scores) > 0:
+        top1 = cand_scores.sort_values(
+            ["obs_idx", "emission_probability", "dist_rank", "arc_id"],
+            ascending=[True, False, True, True],
+            kind="stable"
+        ).drop_duplicates("obs_idx")
+    else:
+        top1 = pd.DataFrame(columns=["obs_idx", "arc_id", "emission_probability"])
+
+    # Compute Classifier Top-1 Continuity
+    net = prepared.network
+    if len(top1) > 1:
+        u1 = top1.arc_idx.to_numpy()[:-1]
+        v1 = top1.arc_idx.to_numpy()[1:]
+        top1_cont = float(((u1 == v1) | (net.arc_to[u1] == net.arc_from[v1])).mean())
+    else:
+        top1_cont = 1.0
+
+    # Compute HMM Decoded Continuity
+    uh = decoded_path["arc_idx"].to_numpy()[:-1]
+    vh = decoded_path["arc_idx"].to_numpy()[1:]
+    valid_mask = (~pd.isna(uh)) & (~pd.isna(vh))
+    if valid_mask.sum() > 0:
+        u_valid = uh[valid_mask].astype(int)
+        v_valid = vh[valid_mask].astype(int)
+        hmm_cont = float(((u_valid == v_valid) | (net.arc_to[u_valid] == net.arc_from[v_valid])).mean())
+    else:
+        hmm_cont = 1.0
+
+    # Server-side Ground Truth Evaluation (if reference route exists)
+    metrics = {
+        "top1_continuity": top1_cont,
+        "hmm_continuity": hmm_cont,
+        "reference_route_available": route_arc_ids is not None,
+    }
+
+    reference_arcs_coords = []
+    if route_arc_ids is not None:
+        try:
+            route_idx = net.route_to_idx(np.asarray(route_arc_ids, dtype=np.int64))
+            px, py = net.projector.forward(track["lon"].to_numpy(), track["lat"].to_numpy())
+            xy = np.column_stack([px, py])
+            aligned = align_route(
+                xy,
+                route_idx,
+                net,
+                AlignConfig()
+            )
+            # Evaluate only where aligned status is valid
+            aligned_mask = (aligned.arc_idx >= 0)
+            if aligned_mask.any():
+                gt_arc_ids = net.arc_ids[aligned.arc_idx[aligned_mask]]
+                obs_idxs = np.where(aligned_mask)[0]
+
+                # Top-1 accuracy
+                top1_map = dict(zip(top1["obs_idx"], top1["arc_id"]))
+                top1_preds = [top1_map.get(i, -999) for i in obs_idxs]
+                top1_acc = float(np.mean([p == g for p, g in zip(top1_preds, gt_arc_ids)]))
+
+                # HMM decoded accuracy
+                hmm_map = dict(zip(decoded_path["obs_idx"], decoded_path["arc_id"]))
+                hmm_preds = [hmm_map.get(i, -999) for i in obs_idxs]
+                hmm_acc = float(np.mean([p == g for p, g in zip(hmm_preds, gt_arc_ids)]))
+
+                metrics.update({
+                    "aligned_observations": int(aligned_mask.sum()),
+                    "top1_accuracy": top1_acc,
+                    "hmm_accuracy": hmm_acc,
+                    "accuracy_gain": float(hmm_acc - top1_acc),
+                    "continuity_gain": float(hmm_cont - top1_cont),
+                })
+
+            # Geometry for reference route
+            for rid in route_idx[:500]:
+                fn = int(net.arc_from[rid])
+                tn = int(net.arc_to[rid])
+                reference_arcs_coords.append([
+                    [float(nodes.iloc[fn].lat), float(nodes.iloc[fn].lon)],
+                    [float(nodes.iloc[tn].lat), float(nodes.iloc[tn].lon)],
+                ])
+        except Exception:
+            pass
+
+    # Extract geometry for visualization
+    # 1. GPS points [lat, lon, t, obs_idx]
+    gps_lats = track["lat"].to_numpy(dtype=float)
+    gps_lons = track["lon"].to_numpy(dtype=float)
+    gps_ts = track["t"].to_numpy(dtype=float)
+    gps_points = [
+        [float(gps_lats[i]), float(gps_lons[i]), float(gps_ts[i]), int(i)]
+        for i in range(len(track))
+    ]
+
+    # 2. Matched road segments coordinates
+    matched_arcs_coords = []
+    seen_arcs = set()
+    for row in decoded_path.itertuples():
+        if pd.isna(row.arc_idx):
+            continue
+        a_idx = int(row.arc_idx)
+        if a_idx not in seen_arcs and 0 <= a_idx < net.n_arcs:
+            seen_arcs.add(a_idx)
+            fn = int(net.arc_from[a_idx])
+            tn = int(net.arc_to[a_idx])
+            matched_arcs_coords.append({
+                "arc_id": int(row.arc_id),
+                "arc_idx": a_idx,
+                "coordinates": [
+                    [float(nodes.iloc[fn].lat), float(nodes.iloc[fn].lon)],
+                    [float(nodes.iloc[tn].lat), float(nodes.iloc[tn].lon)],
+                ],
+            })
+
+    # Prepare predictions table for UI
+    merged_path = decoded_path.copy()
+    merged_path["gps_lat"] = gps_lats
+    merged_path["gps_lon"] = gps_lons
+    merged_path["t"] = gps_ts
+    if len(top1) > 0:
+        top1_sub = top1[["obs_idx", "arc_id", "emission_probability"]].rename(
+            columns={"arc_id": "top1_arc_id", "emission_probability": "top1_probability"}
+        )
+        merged_path = merged_path.merge(top1_sub, on="obs_idx", how="left")
+    else:
+        merged_path["top1_arc_id"] = None
+        merged_path["top1_probability"] = None
+
+    elapsed = time.perf_counter() - started
+
+    # Map center & bounds
+    center = [float(np.mean(gps_lats)), float(np.mean(gps_lons))]
+
+    return {
+        "trip_id": trip_id,
+        "pipeline": "PathSnap-Full",
+        "model": "random_forest_untuned",
+        "decoder": "viterbi_directed",
+        "is_fixture": False,
+        "observation_count": len(track),
+        "candidate_count": len(cand_scores),
+        "matched_count": int((decoded_path["decode_status"] == "matched").sum()),
+        "path_log_probability": decode_res.path_log_probability,
+        "elapsed_seconds": round(elapsed, 3),
+        "metrics": metrics,
+        "map_geometry": {
+            "center": center,
+            "gps_points": gps_points,
+            "matched_arcs": matched_arcs_coords,
+            "reference_arcs": reference_arcs_coords,
+        },
+        "decoded_path": json.loads(merged_path.to_json(orient="records", double_precision=8)),
+    }
+
+
+CLIENT_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PathSnap • Evaluator Workbench</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --card: #334155; --text: #f8fafc;
+    --text-muted: #94a3b8; --primary: #38bdf8; --success: #22c55e;
+    --purple: #a855f7; --border: #475569; --danger: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-height: 100vh; }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; color: var(--primary); }
+  .badge { font-size: 11px; background: rgba(56,189,248,0.15); color: var(--primary); padding: 3px 8px; border-radius: 6px; font-weight: 600; text-transform: uppercase; }
+  .conn-bar { display: flex; align-items: center; gap: 10px; background: var(--card); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); }
+  .conn-bar input { background: transparent; border: none; color: var(--text); font-size: 14px; width: 220px; outline: none; }
+  .conn-bar button { background: var(--primary); color: #000; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: opacity .2s; }
+  .conn-bar button:hover { opacity: .9; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }
+  .status-dot.online { background: var(--success); box-shadow: 0 0 8px var(--success); }
+
+  main { display: grid; grid-template-columns: 380px 1fr; flex: 1; height: calc(100vh - 65px); }
+  .sidebar { background: var(--panel); border-right: 1px solid var(--border); padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+  .section-title { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+
+  select { width: 100%; background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 15px; outline: none; }
+  .btn-group { display: flex; flex-direction: column; gap: 8px; }
+  .btn-primary { background: linear-gradient(135deg, #0284c7, #38bdf8); color: #000; border: none; padding: 12px; border-radius: 8px; font-weight: 700; font-size: 15px; cursor: pointer; transition: transform .1s; }
+  .btn-primary:hover:not(:disabled) { transform: translateY(-1px); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); padding: 10px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; }
+
+  .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .metric-card { background: var(--card); padding: 12px; border-radius: 8px; border: 1px solid var(--border); }
+  .metric-card .val { font-size: 20px; font-weight: 800; color: var(--primary); margin-top: 4px; }
+  .metric-card.success .val { color: var(--success); }
+  .metric-card.purple .val { color: var(--purple); }
+  .metric-card .lbl { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+
+  .content-area { display: flex; flex-direction: column; height: 100%; }
+  #map { flex: 1; min-height: 400px; width: 100%; z-index: 1; }
+  .table-panel { height: 240px; background: var(--panel); border-top: 1px solid var(--border); overflow-y: auto; padding: 12px 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+  th { position: sticky; top: 0; background: var(--panel); padding: 8px 12px; color: var(--text-muted); font-weight: 700; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid #334155; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .legend { display: flex; gap: 16px; align-items: center; font-size: 12px; color: var(--text-muted); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-line { width: 16px; height: 4px; border-radius: 2px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  #loader { display: none; text-align: center; color: var(--primary); font-size: 14px; font-weight: 600; padding: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span>PathSnap</span>
+    <span class="badge">Laptop 2 Evaluator</span>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#38bdf8;"></div>GPS Points</div>
+      <div class="legend-item"><div class="legend-line" style="background:#22c55e; height:5px;"></div>Matched Route (HMM)</div>
+      <div class="legend-item"><div class="legend-line" style="background:#a855f7; height:3px; border-top:2px dashed #a855f7;"></div>Reference Ground Truth</div>
+    </div>
+  </div>
+  <div class="conn-bar">
+    <div id="dot" class="status-dot"></div>
+    <input id="api-url" placeholder="http://10.0.13.39:8000" value="">
+    <button id="btn-connect">Connect</button>
+  </div>
+</header>
+<main>
+  <div class="sidebar">
+    <div>
+      <div class="section-title">Select Evaluation Trip</div>
+      <select id="trip-select" disabled>
+        <option>Connect to API first...</option>
+      </select>
+    </div>
+    <div class="btn-group">
+      <button id="btn-match" class="btn-primary" disabled>⚡ Run Route Matching (HMM)</button>
+      <button id="btn-score" class="btn-secondary" disabled>Candidate Scoring Only</button>
+      <div id="loader">Processing complete pipeline...</div>
+    </div>
+    <div>
+      <div class="section-title">Evaluation Metrics</div>
+      <div class="metrics-grid">
+        <div class="metric-card success">
+          <div class="lbl">HMM Accuracy</div>
+          <div id="m-hmm-acc" class="val">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="lbl">Top-1 Accuracy</div>
+          <div id="m-top1-acc" class="val">—</div>
+        </div>
+        <div class="metric-card success">
+          <div class="lbl">HMM Continuity</div>
+          <div id="m-hmm-cont" class="val">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="lbl">Top-1 Continuity</div>
+          <div id="m-top1-cont" class="val">—</div>
+        </div>
+        <div class="metric-card purple">
+          <div class="lbl">Matched Points</div>
+          <div id="m-matched" class="val">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="lbl">Latency</div>
+          <div id="m-time" class="val">—</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">Live API Request & Response Log</div>
+      <pre id="api-log" style="background:#090d16; border:1px solid var(--border); padding:8px 10px; border-radius:6px; font-size:11px; color:#38bdf8; max-height:140px; overflow-y:auto; font-family:monospace; white-space:pre-wrap; line-height:1.4;">[Ready] Connect to Laptop 1 to begin session.</pre>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted); line-height:1.5;">
+      <b>Architecture</b>: Laptop 1 executes Member 1 preprocessing, Member 2 Random Forest scoring, and Member 3 Viterbi decoding over directed road network topology.
+    </div>
+  </div>
+  <div class="content-area">
+    <div id="map"></div>
+    <div class="table-panel">
+      <table>
+        <thead>
+          <tr>
+            <th>Obs #</th>
+            <th>Timestamp</th>
+            <th>GPS (Lat, Lon)</th>
+            <th>HMM Arc</th>
+            <th>Status</th>
+            <th>Top-1 Arc</th>
+            <th>Emission Prob</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-rows">
+          <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:30px;">Select a trip and run route matching to inspect observations.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+<script>
+  let map = L.map('map', { preferCanvas: true }).setView([56.8, 35.8], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  let layerGroup = L.layerGroup().addTo(map);
+
+  const defaultApi = window.location.origin.includes('8000') ? window.location.origin : (localStorage.getItem('pathsnap_api') || 'http://localhost:8000');
+  document.getElementById('api-url').value = defaultApi;
+
+  function logMsg(msg) {
+    const box = document.getElementById('api-log');
+    if (!box) return;
+    const now = new Date().toLocaleTimeString();
+    box.textContent = `[${now}] ${msg}\n` + box.textContent;
+  }
+
+  async function apiFetch(path, opts={}) {
+    const base = document.getElementById('api-url').value.trim().replace(/\/$/, '');
+    const method = opts.method || 'GET';
+    const t0 = performance.now();
+    logMsg(`-> ${method} ${path}`);
+    const res = await fetch(base + path, opts);
+    const ms = Math.round(performance.now() - t0);
+    if (!res.ok) {
+      logMsg(`<- HTTP ${res.status} ERR (${ms} ms)`);
+      throw new Error(`HTTP ${res.status}: ` + (await res.text()));
+    }
+    logMsg(`<- HTTP ${res.status} OK (${ms} ms)`);
+    return res.json();
+  }
+
+  async function connect() {
+    const dot = document.getElementById('dot');
+    try {
+      const health = await apiFetch('/healthz');
+      const caps = await apiFetch('/v1/pathsnap/capabilities');
+      const tripsData = await apiFetch('/v1/pathsnap/trips');
+      
+      dot.className = 'status-dot online';
+      localStorage.setItem('pathsnap_api', document.getElementById('api-url').value);
+      logMsg(`Connected: Model ${health.model} | Decoder ${health.decoder} | ${tripsData.trips.length} trips loaded`);
+      
+      const select = document.getElementById('trip-select');
+      select.innerHTML = '';
+      tripsData.trips.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.trip_id; opt.textContent = `Trip ${t.trip_id}`;
+        select.appendChild(opt);
+      });
+      select.disabled = false;
+      document.getElementById('btn-match').disabled = false;
+      document.getElementById('btn-score').disabled = false;
+    } catch (e) {
+      dot.className = 'status-dot';
+      logMsg(`Connection error: ${e.message}`);
+      alert('Could not connect to Laptop 1 API: ' + e.message);
+    }
+  }
+
+  document.getElementById('btn-connect').onclick = connect;
+
+  async function runMatch() {
+    const tripId = document.getElementById('trip-select').value;
+    const loader = document.getElementById('loader');
+    const btn = document.getElementById('btn-match');
+    btn.disabled = true; loader.style.display = 'block';
+
+    try {
+      const data = await apiFetch(`/v1/pathsnap/trips/${encodeURIComponent(tripId)}/match`, { method: 'POST' });
+      const m = data.metrics || {};
+      const hmmStr = m.hmm_accuracy != null ? (m.hmm_accuracy * 100).toFixed(1) + '%' : 'N/A';
+      const top1Str = m.top1_accuracy != null ? (m.top1_accuracy * 100).toFixed(1) + '%' : 'N/A';
+      logMsg(`Reconstruction: ${data.matched_count}/${data.observation_count} obs | HMM Acc: ${hmmStr} (Top-1: ${top1Str}) | Latency: ${data.elapsed_seconds}s`);
+      renderResults(data);
+    } catch (e) {
+      logMsg(`Match failed: ${e.message}`);
+      alert('Route matching failed: ' + e.message);
+    } finally {
+      btn.disabled = false; loader.style.display = 'none';
+    }
+  }
+
+  document.getElementById('btn-match').onclick = runMatch;
+
+  async function runScoreOnly() {
+    const tripId = document.getElementById('trip-select').value;
+    const loader = document.getElementById('loader');
+    const btn = document.getElementById('btn-score');
+    btn.disabled = true; loader.style.display = 'block';
+    loader.textContent = 'Running Member 2 ML scoring only...';
+
+    try {
+      const data = await apiFetch(`/v1/pathsnap/trips/${encodeURIComponent(tripId)}/score`, { method: 'POST' });
+      logMsg(`ML Scoring Only: ${data.observation_count} obs, ${data.candidate_count} candidates scored in ${data.elapsed_seconds.toFixed(2)}s`);
+      
+      document.getElementById('m-hmm-acc').textContent = '— (No HMM)';
+      document.getElementById('m-top1-acc').textContent = 'Top-1 Only';
+      document.getElementById('m-hmm-cont').textContent = '—';
+      document.getElementById('m-top1-cont').textContent = 'Independent';
+      document.getElementById('m-matched').textContent = `${data.candidate_count} cands`;
+      document.getElementById('m-time').textContent = data.elapsed_seconds.toFixed(2) + ' s';
+
+      // Render table
+      const rows = data.predictions || [];
+      let html = '';
+      const limit = Math.min(rows.length, 150);
+      for (let i = 0; i < limit; i++) {
+        const r = rows[i];
+        html += `<tr>
+          <td><b>${r.obs_idx}</b></td>
+          <td>${r.t ? r.t.toFixed(1) : '—'}</td>
+          <td>—</td>
+          <td style="color:#94a3b8;">No HMM</td>
+          <td><span style="font-size:11px; padding:2px 6px; border-radius:4px; background:rgba(56,189,248,0.15); color:#38bdf8;">${r.status}</span></td>
+          <td style="color:#22c55e; font-weight:700;">${r.arc_id != null ? r.arc_id : '—'}</td>
+          <td>${r.emission_probability != null ? (r.emission_probability * 100).toFixed(1) + '%' : '—'}</td>
+        </tr>`;
+      }
+      document.getElementById('tbody-rows').innerHTML = html;
+    } catch (e) {
+      logMsg(`Scoring failed: ${e.message}`);
+      alert('Candidate scoring failed: ' + e.message);
+    } finally {
+      btn.disabled = false; loader.style.display = 'none';
+      loader.textContent = 'Processing complete pipeline...';
+    }
+  }
+
+  document.getElementById('btn-score').onclick = runScoreOnly;
+
+  function renderResults(data) {
+    const t0 = performance.now();
+    // 1. Update Metrics
+    const m = data.metrics || {};
+    document.getElementById('m-hmm-acc').textContent = m.hmm_accuracy != null ? (m.hmm_accuracy * 100).toFixed(2) + '%' : 'N/A';
+    document.getElementById('m-top1-acc').textContent = m.top1_accuracy != null ? (m.top1_accuracy * 100).toFixed(2) + '%' : 'N/A';
+    document.getElementById('m-hmm-cont').textContent = m.hmm_continuity != null ? (m.hmm_continuity * 100).toFixed(2) + '%' : 'N/A';
+    document.getElementById('m-top1-cont').textContent = m.top1_continuity != null ? (m.top1_continuity * 100).toFixed(2) + '%' : 'N/A';
+    document.getElementById('m-matched').textContent = `${data.matched_count} / ${data.observation_count}`;
+    document.getElementById('m-time').textContent = data.elapsed_seconds + ' s';
+
+    // 2. Render Map Layers
+    layerGroup.clearLayers();
+    const geom = data.map_geometry || {};
+    const bounds = [];
+
+    // Reference Route (Purple Dashed)
+    if (geom.reference_arcs && geom.reference_arcs.length > 0) {
+      L.polyline(geom.reference_arcs, { color: '#a855f7', weight: 4, dashArray: '6, 6', opacity: 0.8 }).addTo(layerGroup);
+    }
+
+    // Matched Route (Emerald Green)
+    if (geom.matched_arcs && geom.matched_arcs.length > 0) {
+      const segs = geom.matched_arcs.map(a => a.coordinates);
+      L.polyline(segs, { color: '#22c55e', weight: 6, opacity: 0.9 }).addTo(layerGroup);
+    }
+
+    // GPS Points (Sky Blue Circles)
+    if (geom.gps_points && geom.gps_points.length > 0) {
+      const step = Math.max(1, Math.floor(geom.gps_points.length / 500));
+      const latlngs = [];
+      for (let i = 0; i < geom.gps_points.length; i += step) {
+        const pt = geom.gps_points[i];
+        latlngs.push([pt[0], pt[1]]);
+        bounds.push([pt[0], pt[1]]);
+        L.circleMarker([pt[0], pt[1]], {
+          radius: 3, fillColor: '#38bdf8', color: '#0284c7', weight: 1, opacity: 0.7, fillOpacity: 0.7
+        }).bindPopup(`<b>Obs ${pt[3]}</b><br>Time: ${pt[2]}<br>Lat: ${pt[0].toFixed(5)}, Lon: ${pt[1].toFixed(5)}`).addTo(layerGroup);
+      }
+      L.polyline(latlngs, { color: '#0284c7', weight: 2, opacity: 0.4 }).addTo(layerGroup);
+    }
+
+    if (bounds.length > 0) {
+      map.fitBounds(bounds, { padding: [25, 25] });
+    }
+
+    // 3. Batch render table
+    const rows = data.decoded_path || [];
+    let html = '';
+    const limit = Math.min(rows.length, 150);
+    for (let i = 0; i < limit; i++) {
+      const r = rows[i];
+      const statusBg = r.decode_status === 'matched' ? 'rgba(34,197,94,0.15); color:#22c55e;' : 'rgba(239,68,68,0.15); color:#ef4444;';
+      html += `<tr>
+        <td><b>${r.obs_idx}</b></td>
+        <td>${r.t ? r.t.toFixed(1) : '—'}</td>
+        <td>${r.gps_lat?.toFixed(5)}, ${r.gps_lon?.toFixed(5)}</td>
+        <td style="color:#22c55e; font-weight:700;">${r.arc_id != null ? r.arc_id : '—'}</td>
+        <td><span style="font-size:11px; padding:2px 6px; border-radius:4px; background:${statusBg}">${r.decode_status}</span></td>
+        <td style="color:#94a3b8;">${r.top1_arc_id != null ? r.top1_arc_id : '—'}</td>
+        <td>${r.top1_probability != null ? (r.top1_probability * 100).toFixed(1) + '%' : '—'}</td>
+      </tr>`;
+    }
+    document.getElementById('tbody-rows').innerHTML = html;
+    const renderMs = Math.round(performance.now() - t0);
+    logMsg(`Render complete in ${renderMs} ms`);
+  }
+
+  // Auto connect if on same origin
+  if (window.location.port === '8000') {
+    connect();
+  }
+</script>
+</body>
+</html>
+"""
 
 
 def create_app(model_path=None, trips_dir=None):
@@ -95,11 +668,18 @@ def create_app(model_path=None, trips_dir=None):
     @asynccontextmanager
     async def lifespan(app):
         app.state.bundle, app.state.checksum = load_selected(model_path)
+        app.state.decoder = load_member3_decoder(MEMBER3_ARTIFACTS)
         yield
 
-    app = FastAPI(title="PathSnap Laptop 1 - real ML scoring", lifespan=lifespan)
-    origins = [s.strip() for s in os.getenv("API_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if s.strip()]
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type"], allow_credentials=False)
+    app = FastAPI(title="PathSnap Laptop 1 - Real ML Scoring & HMM Route Reconstruction", lifespan=lifespan)
+    origins = [s.strip() for s in os.getenv("API_CORS_ORIGINS", "*").split(",") if s.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins if origins != ["*"] else ["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+        allow_credentials=False
+    )
 
     def registry():
         if not trips_dir.is_dir():
@@ -112,14 +692,38 @@ def create_app(model_path=None, trips_dir=None):
             result[key] = entry
         return result
 
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/ui", response_class=HTMLResponse)
+    def ui_dashboard():
+        return CLIENT_HTML
+
     @app.get("/healthz")
     def health():
-        return dict(status="ok", model_loaded=True, model="random_forest", model_sha256=app.state.checksum, is_fixture=False)
+        return dict(
+            status="ok",
+            model_loaded=True,
+            model="random_forest",
+            model_sha256=app.state.checksum,
+            hmm_connected=True,
+            decoder="viterbi_directed",
+            is_fixture=False
+        )
 
     @app.get("/v1/pathsnap/capabilities")
     def capabilities():
-        return dict(preprocessing="ready", candidate_generation="ready", feature_extraction="ready",
-                    ml_model="ready", hmm_viterbi="not_connected", full_route_pipeline_ready=False, fixture_mode=False)
+        return dict(
+            preprocessing="ready",
+            candidate_generation="ready",
+            feature_extraction="ready",
+            ml_model="ready",
+            hmm_viterbi="ready",
+            full_route_pipeline_ready=True,
+            fixture_mode=False,
+            model_name="random_forest",
+            model_version="untuned",
+            decoder_name="viterbi",
+            decoder_version="member3-viterbi-v1",
+        )
 
     @app.get("/v1/pathsnap/trips")
     def trips():
@@ -138,10 +742,30 @@ def create_app(model_path=None, trips_dir=None):
         except (ValueError, KeyError, IndexError) as exc:
             raise HTTPException(422, detail=str(exc)) from exc
 
+    @app.post("/v1/pathsnap/trips/{trip_id}/match")
+    def match_stored(trip_id: str):
+        entry = registry().get(trip_id)
+        if entry is None:
+            raise HTTPException(404, detail="Unknown trip ID")
+        _, tp, rpth, npth, apth = entry
+        try:
+            cfg = PipelineConfig()
+            track, route = load_trip_files(tp, rpth, cfg.io)
+            return run_matching(
+                app.state.bundle,
+                app.state.decoder,
+                trip_id,
+                track,
+                parse_nodes(npth),
+                parse_arcs(apth),
+                route_arc_ids=route
+            )
+        except (ValueError, KeyError, IndexError) as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+
     @app.post("/v1/pathsnap/score")
     def score_payload(payload: PathSnapPreprocessRequest):
         if payload.node_id_base != 0 or payload.arc_id_base != 0:
-            # The selected artifact was trained with zero-based IDs.
             raise HTTPException(422, detail="Selected model demo requires zero-based network IDs")
         try:
             cfg = PipelineConfig()
@@ -151,6 +775,27 @@ def create_app(model_path=None, trips_dir=None):
             result = run_scoring(app.state.bundle, payload.trip_id, track, nodes, arcs)
             result["reference_route_ignored"] = payload.route_arc_ids is not None
             return result
+        except (ValueError, KeyError, IndexError) as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+
+    @app.post("/v1/pathsnap/match")
+    def match_payload(payload: PathSnapPreprocessRequest):
+        if payload.node_id_base != 0 or payload.arc_id_base != 0:
+            raise HTTPException(422, detail="Selected model demo requires zero-based network IDs")
+        try:
+            cfg = PipelineConfig()
+            track = pd.DataFrame([x.model_dump() for x in payload.observations]).sort_values("t", kind="stable").reset_index(drop=True)
+            nodes = pd.DataFrame([x.model_dump() for x in payload.nodes])
+            arcs = pd.DataFrame([x.model_dump() for x in payload.arcs])
+            return run_matching(
+                app.state.bundle,
+                app.state.decoder,
+                payload.trip_id,
+                track,
+                nodes,
+                arcs,
+                route_arc_ids=payload.route_arc_ids
+            )
         except (ValueError, KeyError, IndexError) as exc:
             raise HTTPException(422, detail=str(exc)) from exc
 
