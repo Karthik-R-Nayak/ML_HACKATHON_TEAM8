@@ -111,7 +111,7 @@ $env:PYTHONPATH="backend;pathsnap"
 
 ## 📄 Deliverables & Reports
 
-- **Technical Report (PDF):** [`docs/PathSnap_Technical_Report.pdf`](docs/PathSnap_Technical_Report.pdf)
+- **Technical Report (PDF):** [`docs/PathSnap_Technical_Report.pdf`](docs/PathSnap_Technical_Report_Team8.pdf)
 - **Folium Interactive Maps:**
   - [`docs/maps/trip_00000052_folium_map.html`](docs/maps/trip_00000052_folium_map.html)
   - [`docs/maps/trip_00000000_folium_map.html`](docs/maps/trip_00000000_folium_map.html)
