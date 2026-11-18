@@ -1,0 +1,5 @@
+-r ../pathsnap/requirements-member2.txt
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+pydantic>=2,<3
+httpx>=0.27,<1

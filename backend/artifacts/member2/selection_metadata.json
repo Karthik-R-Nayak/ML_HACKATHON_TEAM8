@@ -1,0 +1,43 @@
+{
+  "model": "hist_gradient_boosting",
+  "baseline_cv": {
+    "model": "hist_gradient_boosting",
+    "params": {},
+    "top1_trip_mean": 0.8316419097944989,
+    "top1_pooled": 0.7715474626118516,
+    "top1_fold_std": 0.005139924180158778,
+    "macro_f1": 0.9053126860835216,
+    "log_loss": 0.05400440368936996,
+    "fit_seconds": 94.84783590002917,
+    "predict_seconds": 12.76440799998818,
+    "macro_f1_fold_std": 0.022717326701286542
+  },
+  "best_trial": 2,
+  "strongest_baseline_cv": {
+    "model": "random_forest",
+    "params": {},
+    "top1_trip_mean": 0.834008779132574,
+    "top1_pooled": 0.7735623552969151,
+    "top1_fold_std": 0.008362284493547919,
+    "macro_f1": 0.9061428055074877,
+    "log_loss": 0.05486019810388021,
+    "fit_seconds": 900.6839006000082,
+    "predict_seconds": 11.346566799998982,
+    "macro_f1_fold_std": 0.022558949140945087
+  },
+  "selected_model": "random_forest",
+  "best_params": {
+    "learning_rate": 0.0403316977206044,
+    "max_iter": 80,
+    "max_leaf_nodes": 63,
+    "min_samples_leaf": 52,
+    "l2_regularization": 2.1745470981373622
+  },
+  "tuned_cv_top1": 0.833223696736443,
+  "tuned_cv_macro_f1": 0.9042268485142602,
+  "tuned_cv_log_loss": 0.055721721747263864,
+  "selected_variant": "untuned",
+  "n_trials": 12,
+  "tuning_session_seconds": 129.21100150002167,
+  "selection_rule": "highest trip-mean observation Top-1; tie break lower candidate log loss"
+}

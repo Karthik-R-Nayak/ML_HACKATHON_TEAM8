@@ -1,0 +1,38 @@
+{
+  "artifact_file": "selected_model.joblib",
+  "model_name": "random_forest",
+  "variant": "untuned",
+  "model_version": "member2-rf-untuned-v1",
+  "positive_class": 1,
+  "feature_columns": [
+    "dist_m",
+    "proj_frac",
+    "heading_diff_deg",
+    "gps_speed_mps",
+    "gps_bearing_deg",
+    "arc_bearing_deg",
+    "arc_length_m",
+    "from_in_deg",
+    "from_out_deg",
+    "to_in_deg",
+    "to_out_deg",
+    "dt_prev_s",
+    "dt_next_s",
+    "gps_heading_valid",
+    "dist_rank",
+    "dist_minus_min_m",
+    "n_candidates"
+  ],
+  "sha256": "b5533a8709b43a90e06376991b659edf848d188079cebcccee502ba203476eb4",
+  "dependencies": {
+    "numpy": "2.3.2",
+    "pandas": "2.3.2",
+    "scipy": "1.16.2",
+    "scikit-learn": "1.7.2",
+    "optuna": "4.6.0",
+    "joblib": "1.5.2",
+    "matplotlib": "3.10.6",
+    "threadpoolctl": "3.6.0"
+  },
+  "probability_semantics": "candidate-match posterior; not calibrated generative HMM emission likelihood"
+}
